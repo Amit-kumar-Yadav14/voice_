@@ -12,8 +12,6 @@ const configuration = {
     { urls: 'stun:stun2.l.google.com:19302' },
     
     // 🚨 TURN Server Example (Strict Firewalls ko bypass karne ke liye)
-    // Internet par 100% success rate ke liye tumhe TURN server chahiye hoga. 
-    // Tum metered.ca par free account banakar apni details yahan daal sakte ho:
     /*
     {
       urls: 'turn:global.relay.metered.ca:80', // Ya 443
@@ -38,7 +36,6 @@ const optimizeOpusSDP = (sdp) => {
     }
   }
 
-  // If Opus isn't found, just return original SDP
   if (!opusPayloadType) return sdp;
 
   let fmtpFound = false;
@@ -46,13 +43,11 @@ const optimizeOpusSDP = (sdp) => {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Check if it's the specific fmtp line for Opus
     if (line.startsWith(`a=fmtp:${opusPayloadType} `)) {
       fmtpFound = true;
       let params = line.substring(`a=fmtp:${opusPayloadType} `.length);
       const newParams = [];
 
-      // Inject mandatory ultra-low bandwidth params
       if (!params.includes('maxaveragebitrate')) newParams.push('maxaveragebitrate=16000');
       if (!params.includes('cbr')) newParams.push('cbr=1');
       if (!params.includes('fec')) newParams.push('fec=1');
@@ -66,15 +61,12 @@ const optimizeOpusSDP = (sdp) => {
     }
   }
 
-  // If a=fmtp wasn't in the SDP at all, append it at the end
   if (!fmtpFound) {
     modifiedLines.push(`a=fmtp:${opusPayloadType} maxaveragebitrate=16000; cbr=1; fec=1; useinbandfec=1`);
   }
 
-  // Ensure an empty string is not trailing improperly by matching typical SDP format
   return modifiedLines.join('\r\n');
 };
-
 
 function App() {
   const [inRoom, setInRoom] = useState(false);
@@ -83,6 +75,9 @@ function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState('');
   const [remoteConnected, setRemoteConnected] = useState(false);
+  
+  // 🚀 PWA Install State
+  const [installPrompt, setInstallPrompt] = useState(null);
 
   const wsRef = useRef(null);
   const pcRef = useRef(null);
@@ -100,16 +95,41 @@ function App() {
     }
   }, []);
 
+  // 🚀 PWA Install Event Listener
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault(); // Browser ka automatic prompt rok lo
+      setInstallPrompt(e); // Event ko state mein save kar lo
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  // 🚀 Button Click Handler for PWA
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    
+    installPrompt.prompt(); // User ko pop-up dikhao
+    const { outcome } = await installPrompt.userChoice;
+    
+    if (outcome === 'accepted') {
+      console.log('App install successful!');
+      setInstallPrompt(null); // Install hone ke baad button hata do
+    }
+  };
+
   const initWebRTC = (stream) => {
     const pc = new RTCPeerConnection(configuration);
     pcRef.current = pc;
 
-    // Add local tracks to the peer connection
     stream.getTracks().forEach((track) => {
       pc.addTrack(track, stream);
     });
 
-    // Handle incoming ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         sendMessage({
@@ -119,7 +139,6 @@ function App() {
       }
     };
 
-    // Handle connection state changes
     pc.onconnectionstatechange = () => {
       console.log('PeerConnection state:', pc.connectionState);
       if (pc.connectionState === 'connected') {
@@ -129,7 +148,6 @@ function App() {
       }
     };
 
-    // Handle remote tracks
     pc.ontrack = (event) => {
       console.log('Received remote track');
       if (audioElementRef.current) {
@@ -154,9 +172,7 @@ function App() {
   };
 
   const connectSignaling = (room) => {
-    // 🌐 Production-ready WebSocket URL setup
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Agar Vite dev server (5173) pe hai toh localhost:8000 par bhejo, warna same host use karo (for Render)
     const host = window.location.port === '5173' ? 'localhost:8000' : window.location.host;
     const wsUrl = `${protocol}//${host}/ws/${room}/${clientId}`;
     
@@ -165,7 +181,6 @@ function App() {
 
     ws.onopen = () => {
       console.log('Connected to signaling server');
-      // If we joined an existing room, let the creator know we are here
       if (!isCreatorRef.current) {
         sendMessage({ type: 'peer-joined' });
       }
@@ -180,38 +195,27 @@ function App() {
 
       try {
         if (message.type === 'peer-joined') {
-          // The other peer joined, create an offer
           console.log('Peer joined, creating offer');
           let offer = await pc.createOffer();
-
-          // Apply Opus optimization to SDP before setting it
           offer.sdp = optimizeOpusSDP(offer.sdp);
-
           await pc.setLocalDescription(offer);
           sendMessage({ type: 'offer', offer: pc.localDescription });
         }
         else if (message.type === 'offer') {
           console.log('Received offer, creating answer');
-
           let offerDesc = new RTCSessionDescription(message.offer);
-          // Apply optimization to the incoming offer SDP too for robustness
           offerDesc.sdp = optimizeOpusSDP(offerDesc.sdp);
           await pc.setRemoteDescription(offerDesc);
           await processIceQueue(pc);
 
           let answer = await pc.createAnswer();
-
-          // Apply Opus optimization to local SDP answer
           answer.sdp = optimizeOpusSDP(answer.sdp);
-
           await pc.setLocalDescription(answer);
           sendMessage({ type: 'answer', answer: pc.localDescription });
         }
         else if (message.type === 'answer') {
           console.log('Received answer');
-
           let answerDesc = new RTCSessionDescription(message.answer);
-          // Apply optimization to incoming answer SDP
           answerDesc.sdp = optimizeOpusSDP(answerDesc.sdp);
           await pc.setRemoteDescription(answerDesc);
           await processIceQueue(pc);
@@ -230,8 +234,6 @@ function App() {
         else if (message.type === 'peer-disconnected') {
           console.log('Peer disconnected');
           setRemoteConnected(false);
-          // Restart ICE / prepare for a new peer
-          // For simplicity in this demo, we'll just wait for another connection
         }
       } catch (err) {
         console.error('Error handling signaling message:', err);
@@ -301,13 +303,40 @@ function App() {
 
   return (
     <div className="app-container">
-      <div>
+      <div style={{ textAlign: 'center' }}>
         <h1 className="title">VoiceComm</h1>
         <p className="subtitle">Low-Bandwidth Tactical Comms</p>
+        
+        {/* 🚀 NAYA INSTALL BUTTON */}
+        {installPrompt && (
+          <button 
+            onClick={handleInstallClick}
+            style={{
+              backgroundColor: '#10b981', 
+              color: 'white', 
+              padding: '10px 20px', 
+              borderRadius: '8px',
+              border: 'none',
+              fontWeight: 'bold',
+              marginTop: '15px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              margin: '10px auto'
+            }}
+          >
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"></path>
+            </svg>
+            Install App
+          </button>
+        )}
       </div>
 
       {error && (
-        <div style={{ color: 'var(--danger-color)', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.875rem' }}>
+        <div style={{ color: 'var(--danger-color)', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.875rem', marginTop: '1rem' }}>
           {error}
         </div>
       )}
@@ -315,15 +344,17 @@ function App() {
       {!inRoom ? (
         <RoomManager onJoinOrCreate={handleJoinOrCreate} />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', alignItems: 'center', marginTop: '1rem' }}>
           <div>
             <span className={`status-badge ${remoteConnected ? 'status-connected' : 'status-waiting'}`} style={{
               background: remoteConnected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
-              color: remoteConnected ? 'var(--success-color)' : '#fbbf24'
+              color: remoteConnected ? 'var(--success-color)' : '#fbbf24',
+              padding: '5px 10px',
+              borderRadius: '15px'
             }}>
               {remoteConnected ? 'Call Active (Opus Low-BW)' : 'Waiting for Peer...'}
             </span>
-            <p style={{ marginTop: '0.5rem', fontSize: '1.25rem' }}>Room: <strong>{roomId}</strong></p>
+            <p style={{ marginTop: '0.5rem', fontSize: '1.25rem', textAlign: 'center' }}>Room: <strong>{roomId}</strong></p>
           </div>
 
           <div className="controls-container">
@@ -333,7 +364,7 @@ function App() {
             />
           </div>
 
-          <button className="btn btn-danger" onClick={handleLeaveRoom} style={{ marginTop: '1rem' }}>
+          <button className="btn btn-danger" onClick={handleLeaveRoom} style={{ marginTop: '1rem', backgroundColor: '#ef4444', color: 'white', padding: '10px 20px', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
             Leave Room
           </button>
         </div>
