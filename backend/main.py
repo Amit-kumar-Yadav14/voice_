@@ -64,23 +64,37 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: str)
         await manager.broadcast_to_room(disconnect_msg, room_id, websocket)
 
 
-# Serve static files and frontend if built
-frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+# ==========================================
+# 🚀 PWA AND STATIC FILE SERVING FIX
+# ==========================================
+
+# Using abspath to ensure Render finds the exact directory regardless of where it starts
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+frontend_dist = os.path.join(BASE_DIR, "frontend", "dist")
 
 if os.path.exists(frontend_dist):
+    # Serve CSS/JS chunks
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
 
+    # Catch-all route for PWA icons, manifest.json, sw.js, and index.html
     @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
-        # Allow serving root-level files like favicon.ico, vite.svg if they exist
-        potential_file = os.path.join(frontend_dist, full_path)
-        if os.path.exists(potential_file) and os.path.isfile(potential_file):
-            return FileResponse(potential_file)
+    async def serve_spa(full_path: str):
+        # Agar user directly root URL (/) par aata hai, toh index.html de do
+        if full_path == "":
+            return FileResponse(os.path.join(frontend_dist, "index.html"))
             
+        file_path = os.path.join(frontend_dist, full_path)
+        
+        # Agar browser ne specific file maangi hai (jaise pwa-192x192.png) aur wo exist karti hai
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+            
+        # Agar koi random URL/route daal diya (e.g. /room/123), toh react router handle karega, index.html bhej do
         index_path = os.path.join(frontend_dist, "index.html")
         if os.path.exists(index_path):
             return FileResponse(index_path)
-        return {"error": "Frontend build not perfectly found. Run 'npm run build'."}
+            
+        return {"error": "Frontend build partially missing. Run 'npm run build'."}
 else:
     @app.get("/")
     def read_root():
