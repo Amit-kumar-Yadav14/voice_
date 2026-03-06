@@ -304,8 +304,8 @@ function App() {
   return (
     <div className="app-container">
       <div style={{ textAlign: 'center' }}>
-        <h1 className="title">VoiceComm</h1>
-        <p className="subtitle">Low-Bandwidth Tactical Comms</p>
+        <h1 className="title">Voice</h1>
+        <p className="subtitle">NiCK DiCk</p>
         
         {/* 🚀 NAYA INSTALL BUTTON */}
         {installPrompt && (
